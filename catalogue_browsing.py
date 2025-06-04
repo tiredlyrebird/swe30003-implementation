@@ -63,68 +63,63 @@ class ProductCatalogue:
     def search_by_name(self, search_name):
         return [p for p in self.products if search_name.lower() in p.name.lower()]
 
+    def find_product_by_upc(self, upc):
+        return next((p for p in self.products if p.upc == upc), None)
+
+    def remove_product_by_upc(self, upc):
+        self.products = [p for p in self.products if p.upc != upc]
+
 class CheckoutHandler:
     @staticmethod
     def checkout(cart, catalogue):
         if not cart.items:
             print("Cart is empty.")
             return False
-        # Decrement stock in catalogue
+        # Check stock availability
         for upc, qty in cart.items.items():
-            product = next((p for p in catalogue.products if p.upc == upc), None)
+            product = catalogue.find_product_by_upc(upc)
             if product:
                 if product.stock < qty:
                     print(f"Not enough stock for {product.name}. Checkout aborted.")
                     return False
         # Get total cost
         total_price = cart.get_total_price(catalogue)
-        print(f"Total price of items in cart: ${total_price}")
+        print(f"Total price of items in cart: ${total_price:.2f}")
 
-        # Provide payment
-        card_number = input("Enter credit card number: ")
-        card_number = card_number.replace("-", "")
-        card_number = card_number.replace(" ", "")
-        card_number = re.findall("[0-9]+", card_number)[0]
-        if len(card_number) != 16:
+        # Payment inputs and validation
+        card_number = input("Enter credit card number: ").replace("-", "").replace(" ", "")
+        card_number = re.findall(r"[0-9]+", card_number)
+        if not card_number or len(card_number[0]) != 16:
             print("The entered card number should be exactly 16 digits long. Checkout aborted.")
             return False
 
-        expiry_date_month = input("Enter month of card expiry date (1-12): ")
-        expiry_date_month = re.findall("[0-9]+", expiry_date_month)[0]
-        if str(int(expiry_date_month)) != expiry_date_month:
-            print("The entered expiry date month should be a whole number. Checkout aborted.")
-            return False
-        expiry_date_month = int(expiry_date_month)
-        if not (expiry_date_month >= 1 or expiry_date_month <= 12):
+        expiry_date_month = input("Enter month of card expiry date (1-12): ").strip()
+        if not expiry_date_month.isdigit() or not (1 <= int(expiry_date_month) <= 12):
             print("The entered expiry date month should be a whole number between 1 and 12. Checkout aborted.")
             return False
+        expiry_date_month = int(expiry_date_month)
 
-        expiry_date_year = input("Enter year of card expiry date: ")
-        expiry_date_year = re.findall("[0-9]+", expiry_date_year)[0]
-        if str(int(expiry_date_year)) != expiry_date_year:
+        expiry_date_year = input("Enter year of card expiry date (YYYY): ").strip()
+        if not expiry_date_year.isdigit():
             print("The entered expiry date year should be a whole number. Checkout aborted.")
             return False
         expiry_date_year = int(expiry_date_year)
-        
-        # Check card is not expired
-        current_month = datetime.now().month
+
+        # Check card expiration
         current_year = datetime.now().year
-        if not (current_year < expiry_date_year or (current_year == expiry_date_year and current_month < expiry_date_month)):
+        current_month = datetime.now().month
+        if expiry_date_year < current_year or (expiry_date_year == current_year and expiry_date_month < current_month):
             print(f"This card has already expired ({expiry_date_month}/{expiry_date_year}). Checkout aborted.")
             return False
 
-        security_number = input("Enter security number of credit card (3 digits on back): ")
-        security_number = re.findall("[0-9]+", security_number)[0]
-        if len(security_number) != 3:
+        security_number = input("Enter security number of credit card (3 digits on back): ").strip()
+        if not (security_number.isdigit() and len(security_number) == 3):
             print("The entered security number should be exactly 3 digits long. Checkout aborted.")
             return False
 
-        # Note that for a complete implementation of this system, the inputted payment details would then have their balance checked to verify they have the funds to complete the purchase.
-        # For the purposes of this proof of concept, payment is always accepted.
-
-        # Proceed with checkout
+        # Proceed with checkout: reduce stock, clear cart
         for upc, qty in cart.items.items():
-            product = next(p for p in catalogue.products if p.upc == upc)
+            product = catalogue.find_product_by_upc(upc)
             product.stock -= qty
         cart.items.clear()
 
@@ -135,15 +130,19 @@ class Cart:
     def __init__(self):
         self.items = {}  # key: product upc, value: quantity
 
-    def add_to_cart(self, product):
-        if product.stock <= 0:
-            print("Sorry, this product is out of stock and cannot be added.")
+    def add_to_cart(self, product, quantity=1):
+        if product.stock < quantity:
+            print(f"Sorry, only {product.stock} units of {product.name} available. Cannot add {quantity}.")
             return
         if product.upc in self.items:
-            self.items[product.upc] += 1
+            new_quantity = self.items[product.upc] + quantity
+            if new_quantity > product.stock:
+                print(f"Cannot add {quantity} more units. Only {product.stock - self.items[product.upc]} units left.")
+                return
+            self.items[product.upc] = new_quantity
         else:
-            self.items[product.upc] = 1
-        print(f"Added {product.name} to cart.")
+            self.items[product.upc] = quantity
+        print(f"Added {quantity} x {product.name} to cart.")
 
     def remove_from_cart(self, product_upc):
         if product_upc in self.items:
@@ -152,6 +151,20 @@ class Cart:
         else:
             print("Product not found in cart.")
 
+    def update_quantity(self, product_upc, quantity, catalogue):
+        product = catalogue.find_product_by_upc(product_upc)
+        if not product:
+            print("Product not found.")
+            return
+        if quantity <= 0:
+            self.remove_from_cart(product_upc)
+            return
+        if quantity > product.stock:
+            print(f"Only {product.stock} units available. Cannot update to {quantity}.")
+            return
+        self.items[product_upc] = quantity
+        print(f"Updated {product.name} quantity to {quantity}.")
+
     def view_cart(self, catalogue):
         if not self.items:
             print("Cart is empty.")
@@ -159,7 +172,7 @@ class Cart:
         print("\n--- Your Cart ---")
         total = 0
         for idx, (upc, qty) in enumerate(self.items.items(), start=1):
-            product = next((p for p in catalogue.products if p.upc == upc), None)
+            product = catalogue.find_product_by_upc(upc)
             if product:
                 subtotal = product.price * qty
                 total += subtotal
@@ -169,10 +182,9 @@ class Cart:
     def get_total_price(self, catalogue):
         total_price = 0.0
         for upc, qty in self.items.items():
-            product = next(p for p in catalogue.products if p.upc == upc)
+            product = catalogue.find_product_by_upc(upc)
             total_price += product.price * qty
-        total_price = round(total_price, 2)
-        return total_price
+        return round(total_price, 2)
 
     def save(self):
         with open(CART_FILE, "w") as f:
@@ -254,7 +266,14 @@ def product_details_and_add_to_cart(product, cart):
     while True:
         choice = input("Add this product to cart? (y/n): ").strip().lower()
         if choice == "y":
-            cart.add_to_cart(product)
+            while True:
+                qty_str = input(f"Enter quantity to add (available: {product.stock}): ").strip()
+                if not qty_str.isdigit() or int(qty_str) < 1:
+                    print("Enter a valid positive integer.")
+                    continue
+                qty = int(qty_str)
+                cart.add_to_cart(product, qty)
+                break
             break
         elif choice == "n":
             break
@@ -265,7 +284,7 @@ def add_new_product(catalogue):
     print("\n--- Add New Product ---")
     upc = input("Enter UPC code: ").strip()
     # Check if UPC already exists
-    if any(p.upc == upc for p in catalogue.products):
+    if catalogue.find_product_by_upc(upc):
         print("Product with this UPC already exists.")
         return
     name = input("Enter product name: ").strip()
@@ -292,6 +311,112 @@ def add_new_product(catalogue):
     catalogue.save()
     print(f"Product '{name}' added successfully!")
 
+def manage_catalogue_menu(catalogue):
+    while True:
+        print("\n--- Manage Catalogue ---")
+        print("1. Edit product stock")
+        print("2. Delete product from catalogue")
+        print("3. Return to main menu")
+        choice = input("Enter your choice (1-3): ").strip()
+        if choice == "1":
+            edit_product_stock(catalogue)
+        elif choice == "2":
+            delete_product_from_catalogue(catalogue)
+        elif choice == "3":
+            break
+        else:
+            print("Invalid choice. Try again.")
+
+def edit_product_stock(catalogue):
+    if not catalogue.products:
+        print("Catalogue is empty.")
+        return
+    display_products(catalogue.products)
+    upc = input("Enter the UPC of the product to edit stock: ").strip()
+    product = catalogue.find_product_by_upc(upc)
+    if not product:
+        print("Product not found.")
+        return
+    print(f"Current stock for {product.name}: {product.stock}")
+    while True:
+        try:
+            new_stock = int(input("Enter new stock quantity: ").strip())
+            if new_stock < 0:
+                raise ValueError
+            break
+        except ValueError:
+            print("Invalid stock quantity. Enter a non-negative integer.")
+    product.stock = new_stock
+    catalogue.save()
+    print(f"Stock updated for {product.name} to {new_stock}.")
+
+def delete_product_from_catalogue(catalogue):
+    if not catalogue.products:
+        print("Catalogue is empty.")
+        return
+    display_products(catalogue.products)
+    upc = input("Enter the UPC of the product to delete: ").strip()
+    product = catalogue.find_product_by_upc(upc)
+    if not product:
+        print("Product not found.")
+        return
+    confirm = input(f"Are you sure you want to delete '{product.name}'? (y/n): ").strip().lower()
+    if confirm == "y":
+        catalogue.remove_product_by_upc(upc)
+        catalogue.save()
+        print(f"Product '{product.name}' deleted from catalogue.")
+    else:
+        print("Deletion cancelled.")
+
+def cart_menu(cart, catalogue):
+    while True:
+        cart.view_cart(catalogue)
+        if not cart.items:
+            break
+        print("\n1. Remove item")
+        print("2. Update item quantity")
+        print("3. Checkout")
+        print("0. Back to main menu")
+        choice = input("Select an option: ").strip()
+        if choice == "1":
+            remove_idx = input("Enter item number to remove: ").strip()
+            try:
+                idx = int(remove_idx) - 1
+                if idx < 0 or idx >= len(cart.items):
+                    raise IndexError
+                upc_to_remove = list(cart.items.keys())[idx]
+                cart.remove_from_cart(upc_to_remove)
+            except (ValueError, IndexError):
+                print("Invalid item number.")
+        elif choice == "2":
+            update_idx = input("Enter item number to update quantity: ").strip()
+            try:
+                idx = int(update_idx) - 1
+                if idx < 0 or idx >= len(cart.items):
+                    raise IndexError
+                upc_to_update = list(cart.items.keys())[idx]
+                product = catalogue.find_product_by_upc(upc_to_update)
+                if not product:
+                    print("Product not found.")
+                    continue
+                qty_str = input(f"Enter new quantity for {product.name} (0 to remove): ").strip()
+                if not qty_str.isdigit():
+                    print("Enter a valid integer quantity.")
+                    continue
+                qty = int(qty_str)
+                cart.update_quantity(upc_to_update, qty, catalogue)
+            except (ValueError, IndexError):
+                print("Invalid item number.")
+        elif choice == "3":
+            if CheckoutHandler.checkout(cart, catalogue):
+                catalogue.save()
+                cart.save()
+                break
+        elif choice == "0":
+            break
+        else:
+            print("Invalid choice.")
+
 def main():
     users = load_users()
     catalogue = ProductCatalogue()
@@ -314,8 +439,9 @@ def main():
                     print("1. View All Products")
                     print("2. View Cart")
                     print("3. Add New Product")
-                    print("4. Save & Exit")
-                    main_choice = input("Enter your choice (1-4): ").strip()
+                    print("4. Manage Catalogue")
+                    print("5. Save & Exit")
+                    main_choice = input("Enter your choice (1-5): ").strip()
 
                     if main_choice == "1":
                         while True:
@@ -379,13 +505,13 @@ def main():
                                             except (ValueError, IndexError):
                                                 print("Invalid selection.")
                                     else:
-                                        print("Invalid option.")
+                                        print("Invalid choice.")
 
                             elif filter_choice == "3":
                                 search_name = input("Enter product name to search: ").strip()
                                 products = catalogue.search_by_name(search_name)
                                 if not products:
-                                    print(f"No products found matching name: '{search_name}'.")
+                                    print(f"No products found with name containing '{search_name}'.")
                                     continue
                                 display_products(products)
                                 while True:
@@ -402,56 +528,34 @@ def main():
                             elif filter_choice == "0":
                                 break
                             else:
-                                print("Invalid option.")
+                                print("Invalid choice.")
 
                     elif main_choice == "2":
-                        cart.view_cart(catalogue)
-                        while True:
-                            print("\n1. Remove item")
-                            print("2. Checkout")
-                            print("0. Back")
-                            cart_choice = input("Select an option: ").strip()
-                            if cart_choice == "1":
-                                remove_idx = input("Enter item number to remove: ").strip()
-                                try:
-                                    idx = int(remove_idx) - 1
-                                    if idx < 0 or idx >= len(cart.items):
-                                        raise IndexError
-                                    upc_to_remove = list(cart.items.keys())[idx]
-                                    cart.remove_from_cart(upc_to_remove)
-                                except (ValueError, IndexError):
-                                    print("Invalid item number.")
-                            elif cart_choice == "2":
-                                if CheckoutHandler.checkout(cart, catalogue):
-                                    catalogue.save()
-                                    cart.save()
-                                break
-                            elif cart_choice == "0":
-                                break
-                            else:
-                                print("Invalid choice.")
+                        cart_menu(cart, catalogue)
 
                     elif main_choice == "3":
                         add_new_product(catalogue)
 
                     elif main_choice == "4":
+                        manage_catalogue_menu(catalogue)
+
+                    elif main_choice == "5":
+                        print("Saving data and exiting...")
                         catalogue.save()
                         cart.save()
-                        print("Data saved. Exiting...")
-                        break
+                        return
 
                     else:
-                        print("Invalid choice.")
-
+                        print("Invalid choice. Try again.")
+            else:
+                continue
         elif choice == "2":
             signup(users)
-
         elif choice == "3":
             print("Goodbye!")
             break
-
         else:
-            print("Invalid option. Try again.")
+            print("Invalid choice.")
 
 if __name__ == "__main__":
     main()
