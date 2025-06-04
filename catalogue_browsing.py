@@ -1,10 +1,13 @@
 import json
 import os
 import getpass
+import re
+from datetime import datetime
 
 CATALOGUE_FILE = "catalogue.json"
 USERS_FILE = "users.json"
 CART_FILE = "cart.json"
+ORDERS_FILE = "orders.json"
 
 class Product:
     def __init__(self, upc, name, description, price, category, stock):
@@ -60,6 +63,74 @@ class ProductCatalogue:
     def search_by_name(self, search_name):
         return [p for p in self.products if search_name.lower() in p.name.lower()]
 
+class CheckoutHandler:
+    @staticmethod
+    def checkout(cart, catalogue):
+        if not cart.items:
+            print("Cart is empty.")
+            return False
+        # Decrement stock in catalogue
+        for upc, qty in cart.items.items():
+            product = next((p for p in catalogue.products if p.upc == upc), None)
+            if product:
+                if product.stock < qty:
+                    print(f"Not enough stock for {product.name}. Checkout aborted.")
+                    return False
+        # Get total cost
+        total_price = cart.get_total_price(catalogue)
+        print(f"Total price of items in cart: ${total_price}")
+
+        # Provide payment
+        card_number = input("Enter credit card number: ")
+        card_number = card_number.replace("-", "")
+        card_number = card_number.replace(" ", "")
+        card_number = re.findall("[0-9]+", card_number)[0]
+        if len(card_number) != 16:
+            print("The entered card number should be exactly 16 digits long. Checkout aborted.")
+            return False
+
+        expiry_date_month = input("Enter month of card expiry date (1-12): ")
+        expiry_date_month = re.findall("[0-9]+", expiry_date_month)[0]
+        if str(int(expiry_date_month)) != expiry_date_month:
+            print("The entered expiry date month should be a whole number. Checkout aborted.")
+            return False
+        expiry_date_month = int(expiry_date_month)
+        if not (expiry_date_month >= 1 or expiry_date_month <= 12):
+            print("The entered expiry date month should be a whole number between 1 and 12. Checkout aborted.")
+            return False
+
+        expiry_date_year = input("Enter year of card expiry date: ")
+        expiry_date_year = re.findall("[0-9]+", expiry_date_year)[0]
+        if str(int(expiry_date_year)) != expiry_date_year:
+            print("The entered expiry date year should be a whole number. Checkout aborted.")
+            return False
+        expiry_date_year = int(expiry_date_year)
+        
+        # Check card is not expired
+        current_month = datetime.now().month
+        current_year = datetime.now().year
+        if not (current_year < expiry_date_year or (current_year == expiry_date_year and current_month < expiry_date_month)):
+            print(f"This card has already expired ({expiry_date_month}/{expiry_date_year}). Checkout aborted.")
+            return False
+
+        security_number = input("Enter security number of credit card (3 digits on back): ")
+        security_number = re.findall("[0-9]+", security_number)[0]
+        if len(security_number) != 3:
+            print("The entered security number should be exactly 3 digits long. Checkout aborted.")
+            return False
+
+        # Note that for a complete implementation of this system, the inputted payment details would then have their balance checked to verify they have the funds to complete the purchase.
+        # For the purposes of this proof of concept, payment is always accepted.
+
+        # Proceed with checkout
+        for upc, qty in cart.items.items():
+            product = next(p for p in catalogue.products if p.upc == upc)
+            product.stock -= qty
+        cart.items.clear()
+
+        print("Checkout successful! Thank you for your purchase.")
+        return True
+
 class Cart:
     def __init__(self):
         self.items = {}  # key: product upc, value: quantity
@@ -95,24 +166,13 @@ class Cart:
                 print(f"{idx}. {product.name} - ${product.price:.2f} x {qty} = ${subtotal:.2f}")
         print(f"Total: ${total:.2f}")
 
-    def checkout(self, catalogue):
-        if not self.items:
-            print("Cart is empty.")
-            return False
-        # Decrement stock in catalogue
-        for upc, qty in self.items.items():
-            product = next((p for p in catalogue.products if p.upc == upc), None)
-            if product:
-                if product.stock < qty:
-                    print(f"Not enough stock for {product.name}. Checkout aborted.")
-                    return False
-        # Proceed with checkout
+    def get_total_price(self, catalogue):
+        total_price = 0.0
         for upc, qty in self.items.items():
             product = next(p for p in catalogue.products if p.upc == upc)
-            product.stock -= qty
-        self.items.clear()
-        print("Checkout successful! Thank you for your purchase.")
-        return True
+            total_price += product.price * qty
+        total_price = round(total_price, 2)
+        return total_price
 
     def save(self):
         with open(CART_FILE, "w") as f:
@@ -362,7 +422,7 @@ def main():
                                 except (ValueError, IndexError):
                                     print("Invalid item number.")
                             elif cart_choice == "2":
-                                if cart.checkout(catalogue):
+                                if CheckoutHandler.checkout(cart, catalogue):
                                     catalogue.save()
                                     cart.save()
                                 break
